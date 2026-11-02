@@ -7,7 +7,9 @@ authors = [
     { name = "Taha Ibourk-El-Idrissi", email = "tahaidrissi0525@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "mcp[cli]>=2.3.0",
+]
 
 [project.scripts]
 codefixer = "codefixer:main"
