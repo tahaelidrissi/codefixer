@@ -19,11 +19,11 @@ TEST_TIMEOUT = 60
 
 
 def resolve_path(path: str) -> Path:
-    """Convertit un chemin relatif donné par le LLM en chemin absolu sûr, à l'intérieur de WORKSPACE.
+    """Converts a relative path given by the LLM into a safe absolute path, inside WORKSPACE.
 
-    Refuse les chemins absolus avant même de les joindre à WORKSPACE (sinon pathlib ignore
-    silencieusement WORKSPACE), puis résout le résultat (ce qui élimine les ".." et les liens
-    symboliques) et vérifie qu'il reste bien dans le dépôt.
+    Rejects absolute paths before even joining them to WORKSPACE (otherwise pathlib silently
+    ignores WORKSPACE), then resolves the result (which eliminates ".." and symbolic links)
+    and checks that it stays within the repo.
     """
     if Path(path).is_absolute():
         raise ValueError(
@@ -40,13 +40,13 @@ def resolve_path(path: str) -> Path:
 
 @mcp.tool()
 def list_files(
-    path: Annotated[str, Field(description="Dossier à explorer, relatif à la racine du dépôt.")] = ".",
+    path: Annotated[str, Field(description="Directory to explore, relative to the repo root.")] = ".",
 ) -> list[str]:
-    """Liste récursivement les fichiers d'un dossier du dépôt.
+    """Recursively lists the files in a directory of the repo.
 
-    Renvoie les chemins relatifs à la racine du dépôt, séparés par "/" et triés,
-    directement utilisables dans les autres outils.
-    Les dossiers .git, .venv et __pycache__ sont ignorés.
+    Returns paths relative to the repo root, separated by "/" and sorted,
+    directly usable in the other tools.
+    The .git, .venv and __pycache__ directories are ignored.
     """
     root = resolve_path(path)
 
@@ -70,19 +70,19 @@ def list_files(
 
 @mcp.tool()
 def read_file(
-    path: Annotated[str, Field(description="Fichier à lire, relatif à la racine du dépôt.")],
+    path: Annotated[str, Field(description="File to read, relative to the repo root.")],
     start_line: Annotated[
         int | None,
-        Field(description="Première ligne à lire (1-indexée, incluse). Omis = depuis le début."),
+        Field(description="First line to read (1-indexed, inclusive). Omitted = from the start."),
     ] = None,
     end_line: Annotated[
         int | None,
-        Field(description="Dernière ligne à lire (1-indexée, incluse). Omis = jusqu'à la fin."),
+        Field(description="Last line to read (1-indexed, inclusive). Omitted = until the end."),
     ] = None,
 ) -> str:
-    """Lit un fichier du dépôt et numérote chaque ligne ("12: contenu").
+    """Reads a file from the repo and numbers each line ("12: content").
 
-    Utilise start_line / end_line pour lire un extrait plutôt que tout le fichier.
+    Use start_line / end_line to read an excerpt instead of the whole file.
     """
     target = resolve_path(path)
 
@@ -124,13 +124,13 @@ def read_file(
 
 @mcp.tool()
 def search_code(
-    pattern: Annotated[str, Field(description="Expression régulière à chercher (comme grep).")],
-    path: Annotated[str, Field(description="Dossier où chercher, relatif à la racine du dépôt.")] = ".",
+    pattern: Annotated[str, Field(description="Regular expression to search for (like grep).")],
+    path: Annotated[str, Field(description="Directory to search in, relative to the repo root.")] = ".",
 ) -> str:
-    """Cherche un motif dans les fichiers du dépôt.
+    """Searches for a pattern in the files of the repo.
 
-    Renvoie chaque ligne correspondante au format "fichier:ligne: contenu".
-    Les dossiers .git, .venv et __pycache__ sont ignorés, les fichiers binaires aussi.
+    Returns each matching line in the format "file:line: content".
+    The .git, .venv and __pycache__ directories are ignored, as are binary files.
     """
     root = resolve_path(path)
 
@@ -182,18 +182,18 @@ def search_code(
 
 @mcp.tool()
 def edit_file(
-    path: Annotated[str, Field(description="Fichier à modifier, relatif à la racine du dépôt.")],
+    path: Annotated[str, Field(description="File to modify, relative to the repo root.")],
     old_str: Annotated[
         str,
-        Field(description="Texte exact à remplacer, copié depuis read_file (sans les numéros de ligne). "
-                           "Doit apparaître exactement une fois dans le fichier."),
+        Field(description="Exact text to replace, copied from read_file (without the line numbers). "
+                           "Must appear exactly once in the file."),
     ],
-    new_str: Annotated[str, Field(description="Texte de remplacement.")],
+    new_str: Annotated[str, Field(description="Replacement text.")],
 ) -> str:
-    """Remplace old_str par new_str dans un fichier du dépôt.
+    """Replaces old_str with new_str in a file of the repo.
 
-    old_str doit apparaître exactement une fois (sinon erreur : introuvable ou ambigu).
-    Seul ce passage est modifié, le reste du fichier reste intact.
+    old_str must appear exactly once (otherwise error: not found or ambiguous).
+    Only that passage is changed, the rest of the file stays untouched.
     """
     target = resolve_path(path)
 
@@ -230,16 +230,16 @@ def edit_file(
 def run_tests(
     target: Annotated[
         str,
-        Field(description="Fichier, dossier ou test précis à lancer (syntaxe pytest, ex. "
-                           "'tests/test_x.py::test_y'), relatif à la racine du dépôt. Par défaut, tout le dépôt."),
+        Field(description="File, directory, or specific test to run (pytest syntax, e.g. "
+                           "'tests/test_x.py::test_y'), relative to the repo root. Defaults to the whole repo."),
     ] = ".",
 ) -> str:
-    """Lance pytest sur le dépôt et renvoie sa sortie (texte brut, résultats compris).
+    """Runs pytest on the repo and returns its output (raw text, results included).
 
-    Un échec de test n'est pas une erreur de l'outil : la sortie le montre, c'est à l'appelant
-    de l'interpréter. La sortie est tronquée en gardant la fin si elle est trop longue
-    (c'est là que se trouvent le résumé et les erreurs). Le processus est arrêté après
-    TEST_TIMEOUT secondes s'il ne s'est pas terminé.
+    A failing test is not a tool error: the output shows it, it's up to the caller
+    to interpret it. The output is truncated keeping the end if it's too long
+    (that's where the summary and errors are). The process is killed after
+    TEST_TIMEOUT seconds if it hasn't finished.
     """
     file_part = target.split("::", 1)[0]
     resolve_path(file_part)
