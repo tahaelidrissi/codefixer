@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Annotated
 import os
+import re
 from pydantic import Field
 
 from mcp.server import MCPServer
@@ -10,6 +11,7 @@ mcp = MCPServer("workspace")
 WORKSPACE = Path(os.environ.get("CODEFIXER_WORKSPACE", ".")).resolve()
 IGNORED = {".git", ".venv", "__pycache__"}
 MAX_LINES = 2000
+MAX_MATCHES = 200
 
 
 @mcp.tool()
@@ -94,6 +96,64 @@ def read_file(
 
     selected = lines[start - 1 : end]
     return "\n".join(f"{i}: {line}" for i, line in enumerate(selected, start=start))
+
+
+@mcp.tool()
+def search_code(
+    pattern: Annotated[str, Field(description="Expression régulière à chercher (comme grep).")],
+    path: Annotated[str, Field(description="Dossier où chercher, relatif à la racine du dépôt.")] = ".",
+) -> str:
+    """Cherche un motif dans les fichiers du dépôt.
+
+    Renvoie chaque ligne correspondante au format "fichier:ligne: contenu".
+    Les dossiers .git, .venv et __pycache__ sont ignorés, les fichiers binaires aussi.
+    """
+    root = WORKSPACE / path
+
+    if not root.exists():
+        raise ValueError(
+            f"Le dossier '{path}' n'existe pas. Appelle list_files('.') pour voir la structure du dépôt."
+        )
+    if not root.is_dir():
+        raise ValueError(f"'{path}' est un fichier, pas un dossier. Utilise read_file pour le lire.")
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"'{pattern}' n'est pas une expression régulière valide : {e}")
+
+    files = sorted(root.rglob("*"), key=lambda p: p.relative_to(WORKSPACE).as_posix())
+
+    results = []
+    truncated = False
+    for file_path in files:
+        if not file_path.is_file():
+            continue
+        if any(part in IGNORED for part in file_path.parts):
+            continue
+
+        try:
+            lines = file_path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+
+        rel = file_path.relative_to(WORKSPACE).as_posix()
+        for i, line in enumerate(lines, start=1):
+            if regex.search(line):
+                results.append(f"{rel}:{i}: {line}")
+                if len(results) >= MAX_MATCHES:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+    if not results:
+        return f"Aucune correspondance pour '{pattern}'."
+
+    output = "\n".join(results)
+    if truncated:
+        output += f"\n... résultat tronqué à {MAX_MATCHES} correspondances, précise pattern ou path."
+    return output
 
 
 if __name__ == "__main__":

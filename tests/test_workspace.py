@@ -82,3 +82,76 @@ def test_read_file_too_large_with_range_is_allowed(workspace_root, monkeypatch):
     result = workspace.read_file("big.py", start_line=1, end_line=2)
 
     assert result == "1: line0\n2: line1"
+
+
+def test_search_code_finds_matches_across_files(workspace_root):
+    (workspace_root / "pricing.py").write_text(
+        "def calculate_discount(price, rate):\n    return price * rate / 10\n", encoding="utf-8"
+    )
+    (workspace_root / "cart.py").write_text("items = []\n", encoding="utf-8")
+
+    result = workspace.search_code("discount")
+
+    assert result == "pricing.py:1: def calculate_discount(price, rate):"
+
+
+def test_search_code_supports_regex(workspace_root):
+    (workspace_root / "pricing.py").write_text("def calculate_discount():\n    pass\n", encoding="utf-8")
+
+    result = workspace.search_code(r"def \w+_discount")
+
+    assert result == "pricing.py:1: def calculate_discount():"
+
+
+def test_search_code_invalid_regex_raises(workspace_root):
+    with pytest.raises(ValueError, match="expression régulière"):
+        workspace.search_code("(unclosed")
+
+
+def test_search_code_no_match_returns_message(workspace_root):
+    (workspace_root / "cart.py").write_text("items = []\n", encoding="utf-8")
+
+    result = workspace.search_code("discount")
+
+    assert result == "Aucune correspondance pour 'discount'."
+
+
+def test_search_code_ignores_ignored_dirs(workspace_root):
+    (workspace_root / ".git").mkdir()
+    (workspace_root / ".git" / "config").write_text("discount\n", encoding="utf-8")
+    (workspace_root / "app.py").write_text("discount = 10\n", encoding="utf-8")
+
+    result = workspace.search_code("discount")
+
+    assert result == "app.py:1: discount = 10"
+
+
+def test_search_code_skips_binary_files(workspace_root):
+    (workspace_root / "image.png").write_bytes(bytes([0xFF, 0xFE, 0x00, 0x80, 0x81]))
+    (workspace_root / "app.py").write_text("discount = 10\n", encoding="utf-8")
+
+    result = workspace.search_code("discount")
+
+    assert result == "app.py:1: discount = 10"
+
+
+def test_search_code_missing_path_raises(workspace_root):
+    with pytest.raises(ValueError, match="n'existe pas"):
+        workspace.search_code("discount", path="missing")
+
+
+def test_search_code_path_is_a_file_raises(workspace_root):
+    (workspace_root / "app.py").write_text("discount = 10\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="dossier"):
+        workspace.search_code("discount", path="app.py")
+
+
+def test_search_code_truncates_results(workspace_root, monkeypatch):
+    monkeypatch.setattr(workspace, "MAX_MATCHES", 2)
+    (workspace_root / "app.py").write_text("\n".join("discount" for _ in range(5)), encoding="utf-8")
+
+    result = workspace.search_code("discount")
+
+    assert result.count("discount") == 2
+    assert "tronqué" in result
