@@ -176,5 +176,51 @@ def search_code(
     return output
 
 
+@mcp.tool()
+def edit_file(
+    path: Annotated[str, Field(description="Fichier à modifier, relatif à la racine du dépôt.")],
+    old_str: Annotated[
+        str,
+        Field(description="Texte exact à remplacer, copié depuis read_file (sans les numéros de ligne). "
+                           "Doit apparaître exactement une fois dans le fichier."),
+    ],
+    new_str: Annotated[str, Field(description="Texte de remplacement.")],
+) -> str:
+    """Remplace old_str par new_str dans un fichier du dépôt.
+
+    old_str doit apparaître exactement une fois (sinon erreur : introuvable ou ambigu).
+    Seul ce passage est modifié, le reste du fichier reste intact.
+    """
+    target = resolve_path(path)
+
+    if not target.exists():
+        raise ValueError(
+            f"Le fichier '{path}' n'existe pas. Appelle list_files pour voir les fichiers disponibles."
+        )
+    if not target.is_file():
+        raise ValueError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
+
+    count = content.count(old_str)
+    if count == 0:
+        raise ValueError(
+            f"Le texte donné n'apparaît pas dans '{path}'. Vérifie-le avec read_file avant de réessayer."
+        )
+    if count > 1:
+        raise ValueError(
+            f"Le texte donné apparaît {count} fois dans '{path}', c'est ambigu. "
+            "Ajoute plus de contexte à old_str pour cibler un seul passage."
+        )
+
+    line_number = content[: content.index(old_str)].count("\n") + 1
+    target.write_text(content.replace(old_str, new_str, 1), encoding="utf-8")
+
+    return f"'{path}' modifié, ligne {line_number}."
+
+
 if __name__ == "__main__":
     mcp.run()
