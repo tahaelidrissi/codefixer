@@ -14,6 +14,26 @@ MAX_LINES = 2000
 MAX_MATCHES = 200
 
 
+def resolve_path(path: str) -> Path:
+    """Convertit un chemin relatif donné par le LLM en chemin absolu sûr, à l'intérieur de WORKSPACE.
+
+    Refuse les chemins absolus avant même de les joindre à WORKSPACE (sinon pathlib ignore
+    silencieusement WORKSPACE), puis résout le résultat (ce qui élimine les ".." et les liens
+    symboliques) et vérifie qu'il reste bien dans le dépôt.
+    """
+    if Path(path).is_absolute():
+        raise ValueError(
+            f"'{path}' est un chemin absolu, interdit. Utilise un chemin relatif à la racine du dépôt."
+        )
+
+    resolved = (WORKSPACE / path).resolve()
+
+    if not resolved.is_relative_to(WORKSPACE):
+        raise ValueError(f"'{path}' sort du dépôt, ce qui n'est pas autorisé.")
+
+    return resolved
+
+
 @mcp.tool()
 def list_files(
     path: Annotated[str, Field(description="Dossier à explorer, relatif à la racine du dépôt.")] = ".",
@@ -24,7 +44,7 @@ def list_files(
     directement utilisables dans les autres outils.
     Les dossiers .git, .venv et __pycache__ sont ignorés.
     """
-    root = WORKSPACE / path
+    root = resolve_path(path)
 
     if not root.exists():
         raise ValueError(
@@ -60,7 +80,7 @@ def read_file(
 
     Utilise start_line / end_line pour lire un extrait plutôt que tout le fichier.
     """
-    target = WORKSPACE / path
+    target = resolve_path(path)
 
     if not target.exists():
         raise ValueError(
@@ -108,7 +128,7 @@ def search_code(
     Renvoie chaque ligne correspondante au format "fichier:ligne: contenu".
     Les dossiers .git, .venv et __pycache__ sont ignorés, les fichiers binaires aussi.
     """
-    root = WORKSPACE / path
+    root = resolve_path(path)
 
     if not root.exists():
         raise ValueError(
