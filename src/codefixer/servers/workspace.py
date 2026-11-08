@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Annotated
 import os
 import re
+import subprocess
+import sys
 from pydantic import Field
 
 from mcp.server import MCPServer
@@ -12,6 +14,8 @@ WORKSPACE = Path(os.environ.get("CODEFIXER_WORKSPACE", ".")).resolve()
 IGNORED = {".git", ".venv", "__pycache__"}
 MAX_LINES = 2000
 MAX_MATCHES = 200
+MAX_OUTPUT_LINES = 200
+TEST_TIMEOUT = 60
 
 
 def resolve_path(path: str) -> Path:
@@ -220,6 +224,43 @@ def edit_file(
     target.write_text(content.replace(old_str, new_str, 1), encoding="utf-8")
 
     return f"'{path}' modifié, ligne {line_number}."
+
+
+@mcp.tool()
+def run_tests(
+    target: Annotated[
+        str,
+        Field(description="Fichier, dossier ou test précis à lancer (syntaxe pytest, ex. "
+                           "'tests/test_x.py::test_y'), relatif à la racine du dépôt. Par défaut, tout le dépôt."),
+    ] = ".",
+) -> str:
+    """Lance pytest sur le dépôt et renvoie sa sortie (texte brut, résultats compris).
+
+    Un échec de test n'est pas une erreur de l'outil : la sortie le montre, c'est à l'appelant
+    de l'interpréter. La sortie est tronquée en gardant la fin si elle est trop longue
+    (c'est là que se trouvent le résumé et les erreurs). Le processus est arrêté après
+    TEST_TIMEOUT secondes s'il ne s'est pas terminé.
+    """
+    file_part = target.split("::", 1)[0]
+    resolve_path(file_part)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", target],
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            timeout=TEST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError(f"Les tests ont dépassé {TEST_TIMEOUT} secondes et ont été arrêtés.")
+
+    lines = (result.stdout + result.stderr).splitlines()
+    if len(lines) > MAX_OUTPUT_LINES:
+        omitted = len(lines) - MAX_OUTPUT_LINES
+        lines = [f"... sortie tronquée, {omitted} lignes initiales omises ..."] + lines[-MAX_OUTPUT_LINES:]
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
