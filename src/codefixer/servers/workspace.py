@@ -9,6 +9,7 @@ mcp = MCPServer("workspace")
 
 WORKSPACE = Path(os.environ.get("CODEFIXER_WORKSPACE", ".")).resolve()
 IGNORED = {".git", ".venv", "__pycache__"}
+MAX_LINES = 2000
 
 
 @mcp.tool()
@@ -39,3 +40,61 @@ def list_files(
         result.append(p.relative_to(WORKSPACE).as_posix())
 
     return sorted(result)
+
+
+@mcp.tool()
+def read_file(
+    path: Annotated[str, Field(description="Fichier à lire, relatif à la racine du dépôt.")],
+    start_line: Annotated[
+        int | None,
+        Field(description="Première ligne à lire (1-indexée, incluse). Omis = depuis le début."),
+    ] = None,
+    end_line: Annotated[
+        int | None,
+        Field(description="Dernière ligne à lire (1-indexée, incluse). Omis = jusqu'à la fin."),
+    ] = None,
+) -> str:
+    """Lit un fichier du dépôt et numérote chaque ligne ("12: contenu").
+
+    Utilise start_line / end_line pour lire un extrait plutôt que tout le fichier.
+    """
+    target = WORKSPACE / path
+
+    if not target.exists():
+        raise ValueError(
+            f"Le fichier '{path}' n'existe pas. Appelle list_files pour voir les fichiers disponibles."
+        )
+    if not target.is_file():
+        raise ValueError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
+
+    try:
+        lines = target.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        raise ValueError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
+
+    total = len(lines)
+    if total == 0:
+        return ""
+
+    if start_line is None and end_line is None and total > MAX_LINES:
+        raise ValueError(
+            f"'{path}' contient {total} lignes, trop pour être lu en entier. "
+            "Précise start_line et end_line pour lire un extrait."
+        )
+
+    start = start_line if start_line is not None else 1
+    if start < 1:
+        raise ValueError("start_line doit être >= 1.")
+    if start > total:
+        raise ValueError(f"'{path}' ne contient que {total} lignes, start_line={start} est hors limites.")
+
+    end = total if end_line is None else min(end_line, total)
+    if end < start:
+        raise ValueError(f"end_line ({end_line}) doit être >= start_line ({start}).")
+
+    selected = lines[start - 1 : end]
+    return "\n".join(f"{i}: {line}" for i, line in enumerate(selected, start=start))
+
+
+if __name__ == "__main__":
+    mcp.run()
