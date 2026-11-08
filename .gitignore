@@ -1,0 +1,6 @@
+CLAUDE.md
+docs/GUIDE.md
+docs/PROGRESS.md
+
+__pycache__/
+*.pyc
