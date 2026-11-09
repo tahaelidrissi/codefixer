@@ -1,4 +1,5 @@
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from codefixer.servers import workspace
 
@@ -38,7 +39,7 @@ def test_read_file_end_line_beyond_file_is_clamped(workspace_root):
 def test_read_file_start_line_beyond_file_raises(workspace_root):
     (workspace_root / "app.py").write_text("one\ntwo\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="2 lignes"):
+    with pytest.raises(ToolError, match="2 lignes"):
         workspace.read_file("app.py", start_line=5)
 
 
@@ -49,21 +50,21 @@ def test_read_file_empty_file_returns_empty_string(workspace_root):
 
 
 def test_read_file_missing_file_raises(workspace_root):
-    with pytest.raises(ValueError, match="n'existe pas"):
+    with pytest.raises(ToolError, match="n'existe pas"):
         workspace.read_file("missing.py")
 
 
 def test_read_file_on_directory_raises(workspace_root):
     (workspace_root / "pkg").mkdir()
 
-    with pytest.raises(ValueError, match="dossier"):
+    with pytest.raises(ToolError, match="dossier"):
         workspace.read_file("pkg")
 
 
 def test_read_file_binary_file_raises(workspace_root):
     (workspace_root / "image.png").write_bytes(bytes([0xFF, 0xFE, 0x00, 0x80, 0x81]))
 
-    with pytest.raises(ValueError, match="binaire"):
+    with pytest.raises(ToolError, match="binaire"):
         workspace.read_file("image.png")
 
 
@@ -71,7 +72,7 @@ def test_read_file_too_large_without_range_raises(workspace_root, monkeypatch):
     monkeypatch.setattr(workspace, "MAX_LINES", 3)
     (workspace_root / "big.py").write_text("\n".join(f"line{i}" for i in range(10)), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="trop pour être lu en entier"):
+    with pytest.raises(ToolError, match="trop pour être lu en entier"):
         workspace.read_file("big.py")
 
 
@@ -104,7 +105,7 @@ def test_search_code_supports_regex(workspace_root):
 
 
 def test_search_code_invalid_regex_raises(workspace_root):
-    with pytest.raises(ValueError, match="expression régulière"):
+    with pytest.raises(ToolError, match="expression régulière"):
         workspace.search_code("(unclosed")
 
 
@@ -136,14 +137,14 @@ def test_search_code_skips_binary_files(workspace_root):
 
 
 def test_search_code_missing_path_raises(workspace_root):
-    with pytest.raises(ValueError, match="n'existe pas"):
+    with pytest.raises(ToolError, match="n'existe pas"):
         workspace.search_code("discount", path="missing")
 
 
 def test_search_code_path_is_a_file_raises(workspace_root):
     (workspace_root / "app.py").write_text("discount = 10\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="dossier"):
+    with pytest.raises(ToolError, match="dossier"):
         workspace.search_code("discount", path="app.py")
 
 

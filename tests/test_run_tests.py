@@ -1,4 +1,5 @@
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from codefixer.servers import workspace
 
@@ -41,7 +42,7 @@ def test_run_tests_supports_pytest_node_id(workspace_root):
 
 
 def test_run_tests_rejects_escape_attempt(workspace_root):
-    with pytest.raises(ValueError, match="sort du dépôt"):
+    with pytest.raises(ToolError, match="sort du dépôt"):
         workspace.run_tests("../../../Windows")
 
 
@@ -51,7 +52,7 @@ def test_run_tests_times_out(workspace_root, monkeypatch):
         "import time\n\ndef test_hang():\n    time.sleep(30)\n", encoding="utf-8"
     )
 
-    with pytest.raises(ValueError, match="dépassé"):
+    with pytest.raises(ToolError, match="dépassé"):
         workspace.run_tests("test_hang.py")
 
 

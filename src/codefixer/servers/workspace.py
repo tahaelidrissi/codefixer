@@ -7,6 +7,7 @@ import sys
 from pydantic import Field
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 mcp = MCPServer("workspace")
 
@@ -26,14 +27,14 @@ def resolve_path(path: str) -> Path:
     and checks that it stays within the repo.
     """
     if Path(path).is_absolute():
-        raise ValueError(
+        raise ToolError(
             f"'{path}' est un chemin absolu, interdit. Utilise un chemin relatif à la racine du dépôt."
         )
 
     resolved = (WORKSPACE / path).resolve()
 
     if not resolved.is_relative_to(WORKSPACE):
-        raise ValueError(f"'{path}' sort du dépôt, ce qui n'est pas autorisé.")
+        raise ToolError(f"'{path}' sort du dépôt, ce qui n'est pas autorisé.")
 
     return resolved
 
@@ -51,11 +52,11 @@ def list_files(
     root = resolve_path(path)
 
     if not root.exists():
-        raise ValueError(
+        raise ToolError(
             f"Le dossier '{path}' n'existe pas. Appelle list_files('.') pour voir la structure du dépôt."
         )
     if not root.is_dir():
-        raise ValueError(f"'{path}' est un fichier, pas un dossier. Utilise read_file pour le lire.")
+        raise ToolError(f"'{path}' est un fichier, pas un dossier. Utilise read_file pour le lire.")
 
     result = []
     for p in root.rglob("*"):
@@ -87,36 +88,36 @@ def read_file(
     target = resolve_path(path)
 
     if not target.exists():
-        raise ValueError(
+        raise ToolError(
             f"Le fichier '{path}' n'existe pas. Appelle list_files pour voir les fichiers disponibles."
         )
     if not target.is_file():
-        raise ValueError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
+        raise ToolError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
 
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
-        raise ValueError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
+        raise ToolError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
 
     total = len(lines)
     if total == 0:
         return ""
 
     if start_line is None and end_line is None and total > MAX_LINES:
-        raise ValueError(
+        raise ToolError(
             f"'{path}' contient {total} lignes, trop pour être lu en entier. "
             "Précise start_line et end_line pour lire un extrait."
         )
 
     start = start_line if start_line is not None else 1
     if start < 1:
-        raise ValueError("start_line doit être >= 1.")
+        raise ToolError("start_line doit être >= 1.")
     if start > total:
-        raise ValueError(f"'{path}' ne contient que {total} lignes, start_line={start} est hors limites.")
+        raise ToolError(f"'{path}' ne contient que {total} lignes, start_line={start} est hors limites.")
 
     end = total if end_line is None else min(end_line, total)
     if end < start:
-        raise ValueError(f"end_line ({end_line}) doit être >= start_line ({start}).")
+        raise ToolError(f"end_line ({end_line}) doit être >= start_line ({start}).")
 
     selected = lines[start - 1 : end]
     return "\n".join(f"{i}: {line}" for i, line in enumerate(selected, start=start))
@@ -135,16 +136,16 @@ def search_code(
     root = resolve_path(path)
 
     if not root.exists():
-        raise ValueError(
+        raise ToolError(
             f"Le dossier '{path}' n'existe pas. Appelle list_files('.') pour voir la structure du dépôt."
         )
     if not root.is_dir():
-        raise ValueError(f"'{path}' est un fichier, pas un dossier. Utilise read_file pour le lire.")
+        raise ToolError(f"'{path}' est un fichier, pas un dossier. Utilise read_file pour le lire.")
 
     try:
         regex = re.compile(pattern)
     except re.error as e:
-        raise ValueError(f"'{pattern}' n'est pas une expression régulière valide : {e}")
+        raise ToolError(f"'{pattern}' n'est pas une expression régulière valide : {e}")
 
     files = sorted(root.rglob("*"), key=lambda p: p.relative_to(WORKSPACE).as_posix())
 
@@ -198,24 +199,24 @@ def edit_file(
     target = resolve_path(path)
 
     if not target.exists():
-        raise ValueError(
+        raise ToolError(
             f"Le fichier '{path}' n'existe pas. Appelle list_files pour voir les fichiers disponibles."
         )
     if not target.is_file():
-        raise ValueError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
+        raise ToolError(f"'{path}' est un dossier, pas un fichier. Utilise list_files pour l'explorer.")
 
     try:
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        raise ValueError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
+        raise ToolError(f"'{path}' n'est pas un fichier texte lisible (probablement binaire).")
 
     count = content.count(old_str)
     if count == 0:
-        raise ValueError(
+        raise ToolError(
             f"Le texte donné n'apparaît pas dans '{path}'. Vérifie-le avec read_file avant de réessayer."
         )
     if count > 1:
-        raise ValueError(
+        raise ToolError(
             f"Le texte donné apparaît {count} fois dans '{path}', c'est ambigu. "
             "Ajoute plus de contexte à old_str pour cibler un seul passage."
         )
@@ -253,7 +254,7 @@ def run_tests(
             timeout=TEST_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise ValueError(f"Les tests ont dépassé {TEST_TIMEOUT} secondes et ont été arrêtés.")
+        raise ToolError(f"Les tests ont dépassé {TEST_TIMEOUT} secondes et ont été arrêtés.")
 
     lines = (result.stdout + result.stderr).splitlines()
     if len(lines) > MAX_OUTPUT_LINES:
