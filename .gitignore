@@ -4,3 +4,5 @@ docs/PROGRESS.md
 
 __pycache__/
 *.pyc
+
+.env
