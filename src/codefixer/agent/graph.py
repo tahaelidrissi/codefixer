@@ -8,7 +8,8 @@ from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from codefixer.agent.prompts import SYSTEM_PROMPT
+from codefixer.agent.prompts import build_system_prompt
+from codefixer.skills.loader import SkillHeader, load_skill_headers
 
 load_dotenv()
 
@@ -38,7 +39,10 @@ def init_chat_model(model: str) -> BaseChatModel:
 
 
 def build_graph(
-    tools: list[StructuredTool], model: str = DEFAULT_MODEL, max_turns: int = DEFAULT_MAX_TURNS
+    tools: list[StructuredTool],
+    model: str = DEFAULT_MODEL,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    skills: list[SkillHeader] | None = None,
 ) -> CompiledStateGraph:
     """Builds the ReAct loop: an agent node calls the LLM (with these tools bound),
     a conditional edge sends it to the tools node whenever the LLM asked for one,
@@ -51,11 +55,19 @@ def build_graph(
     caller to pass at invoke time) so no future caller can forget it. Hitting
     the limit raises GraphRecursionError - left uncaught here, since silently
     swallowing it would make a failed run look like a clean one.
+
+    `skills` defaults to the real skills shipped in skills/; it's only a
+    parameter so tests can pass a controlled list instead. The system prompt
+    is built once here, not re-read on every turn, since skills don't change
+    during a run.
     """
+    if skills is None:
+        skills = load_skill_headers()
+    system_prompt = build_system_prompt(skills)
     llm = init_chat_model(model).bind_tools(tools)
 
     def agent_node(state: MessagesState) -> dict:
-        response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
+        response = llm.invoke([SystemMessage(content=system_prompt), *state["messages"]])
         return {"messages": [response]}
 
     graph = StateGraph(MessagesState)
