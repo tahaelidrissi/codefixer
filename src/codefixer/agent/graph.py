@@ -1,11 +1,14 @@
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import StructuredTool
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import StructuredTool, ToolException
 from langchain_groq import ChatGroq
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
+
+from codefixer.agent.prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
@@ -40,11 +43,17 @@ def build_graph(tools: list[StructuredTool], model: str = "claude-opus-5-5") -> 
     llm = _init_chat_model(model).bind_tools(tools)
 
     def agent_node(state: MessagesState) -> dict:
-        return {"messages": [llm.invoke(state["messages"])]}
+        response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
+        return {"messages": [response]}
 
     graph = StateGraph(MessagesState)
     graph.add_node("agent", agent_node)
-    graph.add_node("tools", ToolNode(tools))
+    # LangGraph's ToolNode only converts its own ToolInvocationError into a
+    # message for the LLM by default - any other exception, including our
+    # ToolException for a deliberate tool failure, crashes the whole run
+    # unless listed here. Same anticipated-failure-vs-crash split as the MCP
+    # server's ToolError, one layer up.
+    graph.add_node("tools", ToolNode(tools, handle_tool_errors=(ToolException,)))
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
