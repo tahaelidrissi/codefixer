@@ -18,12 +18,13 @@ _PROVIDERS: dict[str, type[BaseChatModel]] = {
 }
 
 
-def _init_chat_model(model: str) -> BaseChatModel:
+def init_chat_model(model: str) -> BaseChatModel:
     """Picks the LangChain chat model class from a "provider:name" string
     (e.g. "groq:llama-3.3-70b-versatile"); a bare name with no prefix
     defaults to "anthropic". This is a tiny hand-written dispatch rather than
     LangChain's own init_chat_model, which pulls in the full `langchain`
-    package for a feature we only need across two providers.
+    package for a feature we only need across two providers. Shared with
+    report.py so both pick a model the same way.
     """
     provider, _, name = model.partition(":")
     if not name:
@@ -48,7 +49,7 @@ def build_graph(
     the limit raises GraphRecursionError - left uncaught here, since silently
     swallowing it would make a failed run look like a clean one.
     """
-    llm = _init_chat_model(model).bind_tools(tools)
+    llm = init_chat_model(model).bind_tools(tools)
 
     def agent_node(state: MessagesState) -> dict:
         response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
