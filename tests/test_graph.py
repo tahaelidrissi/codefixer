@@ -1,6 +1,7 @@
 import os
 
 import pytest
+from langgraph.errors import GraphRecursionError
 
 from codefixer.agent.graph import build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
@@ -69,3 +70,27 @@ async def test_agent_fixes_the_buggy_shop_bug_without_touching_the_test(tmp_path
 
     assert (tmp_path / "test_shop.py").read_text(encoding="utf-8") == test_shop_source
     assert "price * rate / 100" in (tmp_path / "shop.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("model", _MODELS)
+async def test_agent_stops_cleanly_at_the_turn_limit(tmp_path, model):
+    """A max_turns too low for the task must raise GraphRecursionError, not
+    loop forever or silently return a half-finished result."""
+    (tmp_path / "shop.py").write_text(
+        "def calculate_discount(price, rate):\n    return price * rate / 10\n", encoding="utf-8"
+    )
+    (tmp_path / "test_shop.py").write_text(
+        "from shop import calculate_discount\n\n\n"
+        "def test_calculate_discount():\n"
+        "    assert calculate_discount(100, 10) == 10\n",
+        encoding="utf-8",
+    )
+
+    async with workspace_session(str(tmp_path)) as session:
+        tools = await load_workspace_tools(session)
+        graph = build_graph(tools, model=model, max_turns=1)
+
+        with pytest.raises(GraphRecursionError):
+            await graph.ainvoke(
+                {"messages": [("user", "There's a failing test in this repository. Fix it.")]}
+            )

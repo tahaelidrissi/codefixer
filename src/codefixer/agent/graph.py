@@ -33,12 +33,20 @@ def _init_chat_model(model: str) -> BaseChatModel:
     return _PROVIDERS[provider](model=name)
 
 
-def build_graph(tools: list[StructuredTool], model: str = "claude-opus-5-5") -> CompiledStateGraph:
+def build_graph(
+    tools: list[StructuredTool], model: str = "claude-opus-5-5", max_turns: int = 25
+) -> CompiledStateGraph:
     """Builds the ReAct loop: an agent node calls the LLM (with these tools bound),
     a conditional edge sends it to the tools node whenever the LLM asked for one,
     and the tools node's result goes back to the agent. Ends when the LLM answers
     without requesting a tool. `model` is a plain "provider:name" string, not
     hardcoded, so the same graph can run against different models and providers.
+
+    `max_turns` caps LangGraph's recursion_limit so a stuck agent can't loop
+    forever; it's baked into the compiled graph itself (not left for the
+    caller to pass at invoke time) so no future caller can forget it. Hitting
+    the limit raises GraphRecursionError - left uncaught here, since silently
+    swallowing it would make a failed run look like a clean one.
     """
     llm = _init_chat_model(model).bind_tools(tools)
 
@@ -58,4 +66,4 @@ def build_graph(tools: list[StructuredTool], model: str = "claude-opus-5-5") -> 
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
 
-    return graph.compile()
+    return graph.compile().with_config(recursion_limit=max_turns)
