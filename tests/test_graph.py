@@ -27,22 +27,28 @@ def anyio_backend():
 
 @pytest.mark.parametrize("model", _MODELS)
 async def test_agent_calls_a_tool_and_stops(tmp_path, model):
-    """Proves the loop works end to end: the LLM must pick list_files on its
-    own, observe the result, and stop - checked against two different
-    providers to confirm nothing is hardcoded."""
-    (tmp_path / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    """Proves the loop works end to end: the LLM must pick run_tests on its
+    own, observe a passing result, and stop - checked against two different
+    providers to confirm nothing is hardcoded.
+
+    The task must fit the system prompt's bug-fixing method (run tests
+    first), or a weaker model can wander off-script: an earlier version of
+    this test asked the agent to "list the files" instead, which doesn't
+    match that method at all - on Groq's free model, it kept exploring with
+    no bug to find until it hallucinated a tool that doesn't exist.
+    """
+    (tmp_path / "test_app.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
     async with workspace_session(str(tmp_path)) as session:
         tools = await load_workspace_tools(session)
         graph = build_graph(tools, model=model)
 
         result = await graph.ainvoke(
-            {"messages": [("user", "List the files in the repo, using the tools you have.")]}
+            {"messages": [("user", "Run the tests in this repository and tell me if they pass.")]}
         )
 
     tool_messages = [message for message in result["messages"] if message.type == "tool"]
-    assert tool_messages
-    assert "app.py" in tool_messages[0].content
+    assert any(message.name == "run_tests" and "passed" in message.content for message in tool_messages)
 
 
 @pytest.mark.parametrize("model", _MODELS)

@@ -17,6 +17,9 @@ _PROVIDERS: dict[str, type[BaseChatModel]] = {
     "groq": ChatGroq,
 }
 
+DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_MAX_TURNS = 25
+
 
 def init_chat_model(model: str) -> BaseChatModel:
     """Picks the LangChain chat model class from a "provider:name" string
@@ -35,7 +38,7 @@ def init_chat_model(model: str) -> BaseChatModel:
 
 
 def build_graph(
-    tools: list[StructuredTool], model: str = "claude-opus-5-5", max_turns: int = 25
+    tools: list[StructuredTool], model: str = DEFAULT_MODEL, max_turns: int = DEFAULT_MAX_TURNS
 ) -> CompiledStateGraph:
     """Builds the ReAct loop: an agent node calls the LLM (with these tools bound),
     a conditional edge sends it to the tools node whenever the LLM asked for one,

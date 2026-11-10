@@ -71,8 +71,11 @@ def test_format_step_ignores_human_and_system_messages():
 @pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="no GROQ_API_KEY")
 async def test_format_step_handles_real_agent_messages(tmp_path):
     """format_step must also make sense of what a real run actually produces,
-    not just the synthetic messages above."""
-    (tmp_path / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    not just the synthetic messages above. The task must fit the system
+    prompt's bug-fixing method (run tests first) - a mismatched task like
+    "list the files" sent a weaker model wandering off-script until it
+    hallucinated a tool that doesn't exist."""
+    (tmp_path / "test_app.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
     async with workspace_session(str(tmp_path)) as session:
         tools = await load_workspace_tools(session)
@@ -80,14 +83,14 @@ async def test_format_step_handles_real_agent_messages(tmp_path):
 
         steps = []
         async for state in graph.astream(
-            {"messages": [("user", "List the files in the repo, using the tools you have.")]},
+            {"messages": [("user", "Run the tests in this repository and tell me if they pass.")]},
             stream_mode="values",
         ):
             step = format_step(state["messages"][-1])
             if step is not None:
                 steps.append(step)
 
-    assert any(step.startswith("[tool] list_files") for step in steps)
+    assert any(step.startswith("[tool] run_tests") for step in steps)
     assert any(step.startswith("[result]") for step in steps)
 
 

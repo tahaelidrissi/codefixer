@@ -1,7 +1,7 @@
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import BaseModel, Field
 
-from codefixer.agent.graph import init_chat_model
+from codefixer.agent.graph import DEFAULT_MODEL, init_chat_model
 
 
 class Report(BaseModel):
@@ -36,7 +36,7 @@ def _extract_tests_passed(messages: list[BaseMessage]) -> bool:
     return False
 
 
-def build_report(messages: list[BaseMessage], model: str = "claude-opus-5-5") -> Report:
+def build_report(messages: list[BaseMessage], model: str = DEFAULT_MODEL) -> Report:
     """Builds the agent's final report from a finished run. files_modified and
     tests_passed are extracted from the tool-call trace, which is a fact we
     already have; only `cause` - a judgment only the model can make - is
