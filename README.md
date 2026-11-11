@@ -27,6 +27,14 @@ protocol, not through direct function calls:
 - **CLI** (`src/codefixer/cli.py`) — `codefixer fix <repo> "<problem>"` ties all
   of the above into one command: it streams each step live as the agent works,
   then prints the final report.
+- **Skills** (`skills/`, `src/codefixer/skills/loader.py`) — small Markdown
+  files with specialized know-how (writing a regression test, debugging an
+  import error, following a repo's conventions). Only each skill's name and
+  description are injected into the system prompt (progressive disclosure);
+  the agent loads a skill's full instructions on demand through a
+  `load_skill` tool. Skills are also exposed as MCP resources
+  (`src/codefixer/servers/skills.py`), and a target repo can add its own
+  under `.codefixer/skills/`, overriding a built-in skill of the same name.
 
 Models are chosen per run as a `"provider:name"` string (e.g.
 `"anthropic:claude-opus-5-5"` or `"groq:openai/gpt-oss-120b"`), so the same code
@@ -72,7 +80,7 @@ Defaults to `anthropic:claude-opus-5-5`; pass `--model` to use another
 provider or model (e.g. `--model groq:openai/gpt-oss-120b`), and `--max-turns`
 to change the turn limit (default 25).
 
-## Trying the `workspace` server by hand
+## Trying the MCP servers by hand
 
 ```bash
 set CODEFIXER_WORKSPACE=path\to\a\repo
@@ -81,6 +89,20 @@ uv run mcp dev src/codefixer/servers/workspace.py
 
 This opens the MCP Inspector, where each of the five tools can be called
 directly to see its schema and output.
+
+```bash
+uv run mcp dev src/codefixer/servers/skills.py
+```
+
+Same Inspector, but the Resources tab: one `skill://<name>` entry per
+built-in skill, each showing its full `SKILL.md` content.
+
+## Skills
+
+Three skills ship in `skills/`: `write-pytest-test`, `debug-import-error`,
+and `repo-conventions`. A target repo can add its own under
+`.codefixer/skills/` — picked up automatically by the CLI, with a repo skill
+overriding a built-in one of the same name.
 
 ## The example bug
 
@@ -100,20 +122,25 @@ uv run python examples/buggy_shop/fix_cycle.py
 src/codefixer/
 ├── cli.py                 `codefixer fix <repo> "<problem>"`
 ├── servers/
-│   └── workspace.py       MCP server: file tools and test runner
-└── agent/
-    ├── mcp_client.py       connects to the workspace server, adapts its tools for an LLM
-    ├── graph.py            the LangGraph agent loop
-    ├── prompts.py          the agent's system prompt (method, constraints)
-    ├── report.py           builds the structured final report
-    └── trace.py            formats one agent-loop message into a readable line
+│   ├── workspace.py       MCP server: file tools and test runner
+│   └── skills.py          MCP server: skills exposed as resources
+├── agent/
+│   ├── mcp_client.py       connects to the workspace server, adapts its tools for an LLM
+│   ├── graph.py            the LangGraph agent loop, the load_skill tool
+│   ├── prompts.py          the agent's system prompt (method, constraints)
+│   ├── report.py           builds the structured final report
+│   └── trace.py            formats one agent-loop message into a readable line
+└── skills/
+    └── loader.py           reads SKILL.md headers and bodies, built-in and per-repo
+skills/                    the 3 built-in skills shipped with CodeFixer
 examples/buggy_shop/       a small buggy repo used to exercise the tools and the agent
 tests/                     Pytest suite for the server, the adapter, and the agent loop
 ```
 
 ## Status
 
-Steps 1 (the `workspace` MCP server) and 2 (the agent loop and CLI) are
-complete: five tested tools, a LangGraph ReAct loop with a system prompt, a
-turn limit, a structured report, and a working `codefixer fix` command. Next
-up: step 3, agent skills.
+Steps 1 (the `workspace` MCP server), 2 (the agent loop and CLI), and 3
+(agent skills) are complete: five tested tools, a LangGraph ReAct loop with
+a system prompt, a turn limit, a structured report, a working `codefixer
+fix` command, and skills with progressive disclosure, MCP resources, and
+per-repo overrides. Next up: step 4, the Docker sandbox.
