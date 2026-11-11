@@ -23,3 +23,15 @@ def load_skill_headers(skills_dir: Path = SKILLS_DIR) -> list[SkillHeader]:
         metadata = yaml.safe_load(front_matter)
         headers.append(SkillHeader(name=metadata["name"], description=metadata["description"]))
     return headers
+
+
+def load_skill_body(name: str, skills_dir: Path = SKILLS_DIR) -> str:
+    """Reads one skill's full instructions (the part after the front matter) -
+    progressive disclosure level 2, only for the one skill the agent asked
+    for by name.
+    """
+    skill_md = skills_dir / name / "SKILL.md"
+    if not skill_md.exists():
+        raise ValueError(f"Unknown skill '{name}'.")
+    _, _, body = skill_md.read_text(encoding="utf-8").split("---", 2)
+    return body.strip()

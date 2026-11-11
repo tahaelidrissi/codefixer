@@ -2,14 +2,14 @@ from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
-from langchain_core.tools import StructuredTool, ToolException
+from langchain_core.tools import StructuredTool, ToolException, tool
 from langchain_groq import ChatGroq
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from codefixer.agent.prompts import build_system_prompt
-from codefixer.skills.loader import SkillHeader, load_skill_headers
+from codefixer.skills.loader import SkillHeader, load_skill_body, load_skill_headers
 
 load_dotenv()
 
@@ -38,6 +38,27 @@ def init_chat_model(model: str) -> BaseChatModel:
     return _PROVIDERS[provider](model=name)
 
 
+def _build_skill_tool() -> StructuredTool:
+    """A local tool, not routed through the MCP workspace server: skills are
+    CodeFixer's own bundled knowledge, not something another agent needs to
+    reuse over the protocol. Converts the loader's ValueError into
+    ToolException so a bad skill name reaches the LLM as a normal failed
+    tool call instead of crashing the run - same pattern as every other
+    tool in this graph.
+    """
+
+    @tool
+    def load_skill(name: str) -> str:
+        """Load the full instructions of one of the skills listed in the
+        system prompt, by its exact name."""
+        try:
+            return load_skill_body(name)
+        except ValueError as exc:
+            raise ToolException(str(exc)) from exc
+
+    return load_skill
+
+
 def build_graph(
     tools: list[StructuredTool],
     model: str = DEFAULT_MODEL,
@@ -64,7 +85,8 @@ def build_graph(
     if skills is None:
         skills = load_skill_headers()
     system_prompt = build_system_prompt(skills)
-    llm = init_chat_model(model).bind_tools(tools)
+    all_tools = [*tools, _build_skill_tool()] if skills else tools
+    llm = init_chat_model(model).bind_tools(all_tools)
 
     def agent_node(state: MessagesState) -> dict:
         response = llm.invoke([SystemMessage(content=system_prompt), *state["messages"]])
@@ -77,7 +99,7 @@ def build_graph(
     # ToolException for a deliberate tool failure, crashes the whole run
     # unless listed here. Same anticipated-failure-vs-crash split as the MCP
     # server's ToolError, one layer up.
-    graph.add_node("tools", ToolNode(tools, handle_tool_errors=(ToolException,)))
+    graph.add_node("tools", ToolNode(all_tools, handle_tool_errors=(ToolException,)))
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")

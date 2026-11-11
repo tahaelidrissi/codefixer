@@ -79,6 +79,36 @@ async def test_agent_fixes_the_buggy_shop_bug_without_touching_the_test(tmp_path
 
 
 @pytest.mark.parametrize("model", _MODELS)
+async def test_agent_can_load_a_skill_by_name(tmp_path, model):
+    """Proves the load_skill tool is actually wired into the graph and
+    reachable by the LLM. The instruction names the tool and the skill
+    explicitly, so this checks the plumbing - not whether the model would
+    have picked that skill on its own for a matching bug."""
+    (tmp_path / "test_app.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    async with workspace_session(str(tmp_path)) as session:
+        tools = await load_workspace_tools(session)
+        graph = build_graph(tools, model=model)
+
+        result = await graph.ainvoke(
+            {
+                "messages": [
+                    (
+                        "user",
+                        "Call the load_skill tool with name 'write-pytest-test' and "
+                        "summarize what it says.",
+                    )
+                ]
+            }
+        )
+
+    tool_messages = [message for message in result["messages"] if message.type == "tool"]
+    assert any(
+        message.name == "load_skill" and "test" in message.content.lower() for message in tool_messages
+    )
+
+
+@pytest.mark.parametrize("model", _MODELS)
 async def test_agent_stops_cleanly_at_the_turn_limit(tmp_path, model):
     """A max_turns too low for the task must raise GraphRecursionError, not
     loop forever or silently return a half-finished result."""
