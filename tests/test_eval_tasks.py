@@ -1,18 +1,26 @@
 from codefixer.evals.tasks import load_tasks
 
 
-def test_load_tasks_finds_the_first_eval_task():
+def test_load_tasks_finds_the_five_eval_tasks():
     tasks = load_tasks()
 
-    assert len(tasks) == 1
-    task = tasks[0]
-    assert task.name == "calc_discount_divisor"
-    assert task.category == "calculation"
-    assert task.problem
-    assert (task.repo_dir / "shop.py").exists()
-    assert (task.repo_dir / "test_shop.py").exists()
-    assert task.hidden_test_path.exists()
-    assert not (task.repo_dir / "hidden_test.py").exists()
+    names = {task.name for task in tasks}
+    assert names == {
+        "calc_discount_divisor",
+        "budget_edge_case",
+        "import_error_typo",
+        "wrong_type_concat",
+        "multi_file_tax",
+    }
+
+    categories = {task.category for task in tasks}
+    assert categories == {"calculation", "edge_case", "import_error", "wrong_type", "multi_file"}
+
+    for task in tasks:
+        assert task.problem
+        assert task.repo_dir.is_dir()
+        assert task.hidden_test_path.exists()
+        assert not (task.repo_dir / "hidden_test.py").exists()
 
 
 def test_load_tasks_reads_a_custom_directory(tmp_path):
