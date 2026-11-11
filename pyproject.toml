@@ -28,3 +28,11 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.pytest.ini_options]
+# Without this, pytest scans the whole repo by default: it collides on
+# same-named test files between examples/ and evals/tasks/ (no __init__.py
+# to disambiguate them), and picks up evals/tasks/*/hidden_test.py by
+# accident, since "*_test.py" matches its default discovery pattern too -
+# exactly what a hidden test must never be.
+testpaths = ["tests"]
