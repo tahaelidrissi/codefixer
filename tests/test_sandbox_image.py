@@ -1,20 +1,14 @@
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from conftest import requires_docker
+
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "src" / "codefixer" / "sandbox"
 IMAGE_TAG = "codefixer-sandbox-test"
 
-
-def _docker_available() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-
-
-pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker is not available")
+pytestmark = requires_docker
 
 
 @pytest.fixture(scope="module")
