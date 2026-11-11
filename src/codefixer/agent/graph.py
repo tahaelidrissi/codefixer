@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
@@ -9,7 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from codefixer.agent.prompts import build_system_prompt
-from codefixer.skills.loader import SkillHeader, load_skill_body, load_skill_headers
+from codefixer.skills.loader import SKILLS_DIR, load_skill_body, load_skill_headers
 
 load_dotenv()
 
@@ -38,7 +40,7 @@ def init_chat_model(model: str) -> BaseChatModel:
     return _PROVIDERS[provider](model=name)
 
 
-def _build_skill_tool() -> StructuredTool:
+def _build_skill_tool(skills_dirs: list[Path]) -> StructuredTool:
     """A local tool, not routed through the MCP workspace server: skills are
     CodeFixer's own bundled knowledge, not something another agent needs to
     reuse over the protocol. Converts the loader's ValueError into
@@ -52,7 +54,7 @@ def _build_skill_tool() -> StructuredTool:
         """Load the full instructions of one of the skills listed in the
         system prompt, by its exact name."""
         try:
-            return load_skill_body(name)
+            return load_skill_body(name, skills_dirs=skills_dirs)
         except ValueError as exc:
             raise ToolException(str(exc)) from exc
 
@@ -63,7 +65,7 @@ def build_graph(
     tools: list[StructuredTool],
     model: str = DEFAULT_MODEL,
     max_turns: int = DEFAULT_MAX_TURNS,
-    skills: list[SkillHeader] | None = None,
+    skills_dirs: list[Path] | None = None,
 ) -> CompiledStateGraph:
     """Builds the ReAct loop: an agent node calls the LLM (with these tools bound),
     a conditional edge sends it to the tools node whenever the LLM asked for one,
@@ -77,15 +79,16 @@ def build_graph(
     the limit raises GraphRecursionError - left uncaught here, since silently
     swallowing it would make a failed run look like a clean one.
 
-    `skills` defaults to the real skills shipped in skills/; it's only a
-    parameter so tests can pass a controlled list instead. The system prompt
+    `skills_dirs` defaults to just the built-in skills/; the CLI adds a
+    target repo's own .codefixer/skills/ when it has one. The system prompt
     is built once here, not re-read on every turn, since skills don't change
     during a run.
     """
-    if skills is None:
-        skills = load_skill_headers()
+    if skills_dirs is None:
+        skills_dirs = [SKILLS_DIR]
+    skills = load_skill_headers(skills_dirs)
     system_prompt = build_system_prompt(skills)
-    all_tools = [*tools, _build_skill_tool()] if skills else tools
+    all_tools = [*tools, _build_skill_tool(skills_dirs)] if skills else tools
     llm = init_chat_model(model).bind_tools(all_tools)
 
     def agent_node(state: MessagesState) -> dict:

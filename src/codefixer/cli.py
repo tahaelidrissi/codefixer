@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 from langgraph.errors import GraphRecursionError
 
@@ -8,6 +9,7 @@ from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
 from codefixer.agent.report import build_report
 from codefixer.agent.trace import format_step
+from codefixer.skills.loader import SKILLS_DIR
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -27,13 +29,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _resolve_skills_dirs(repo: str) -> list[Path]:
+    """Built-in skills, plus the target repo's own .codefixer/skills/ if it
+    has one - added automatically, no CLI flag needed."""
+    skills_dirs = [SKILLS_DIR]
+    repo_skills_dir = Path(repo) / ".codefixer" / "skills"
+    if repo_skills_dir.is_dir():
+        skills_dirs.append(repo_skills_dir)
+    return skills_dirs
+
+
 async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> None:
     hit_limit = False
     final_state = None
 
+    skills_dirs = _resolve_skills_dirs(repo)
+
     async with workspace_session(repo) as session:
         tools = await load_workspace_tools(session)
-        graph = build_graph(tools, model=model, max_turns=max_turns)
+        graph = build_graph(tools, model=model, max_turns=max_turns, skills_dirs=skills_dirs)
 
         # Caught here, inside the session's `async with`, not in main(): an
         # exception still propagating when this block exits gets wrapped in

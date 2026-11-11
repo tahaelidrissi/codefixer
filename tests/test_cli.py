@@ -2,7 +2,18 @@ import os
 
 import pytest
 
-from codefixer.cli import _parse_args, main
+from codefixer.cli import _parse_args, _resolve_skills_dirs, main
+from codefixer.skills.loader import SKILLS_DIR
+
+
+def test_resolve_skills_dirs_is_just_the_builtin_ones_by_default(tmp_path):
+    assert _resolve_skills_dirs(str(tmp_path)) == [SKILLS_DIR]
+
+
+def test_resolve_skills_dirs_adds_the_repos_own_skills_if_present(tmp_path):
+    (tmp_path / ".codefixer" / "skills").mkdir(parents=True)
+
+    assert _resolve_skills_dirs(str(tmp_path)) == [SKILLS_DIR, tmp_path / ".codefixer" / "skills"]
 
 
 def test_parse_args_fix_defaults():
