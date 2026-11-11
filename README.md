@@ -16,8 +16,13 @@ protocol, not through direct function calls:
   `read_file`, `search_code`, `edit_file`, and `run_tests`. All file access is
   confined to a single configurable repo root; tests run in an isolated
   subprocess with a timeout.
-- **Agent** (`src/codefixer/agent/`) — a client that launches the `workspace`
-  server as a subprocess, converts its tools into a format an LLM can call, and
+- **Sandbox** (`src/codefixer/sandbox/`) — the `workspace` server actually runs
+  *inside* a disposable Docker container, not on the host: no network access,
+  capped CPU/memory, a read-only filesystem except the repo itself, and any
+  command killed if it runs too long. The repo is copied in and the final
+  result copied back out — the host's real filesystem is never mounted.
+- **Agent** (`src/codefixer/agent/`) — a client that launches the sandboxed
+  `workspace` server, converts its tools into a format an LLM can call, and
   drives a LangGraph loop: an agent node calls the model (with a system prompt
   giving it its method and a turn limit so it can't loop forever), a tools node
   executes whatever it asked for against the real server, and the cycle repeats
@@ -44,6 +49,8 @@ runs against any supported provider — currently Anthropic and Groq.
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
+- [Docker](https://www.docker.com/), running, with the `codefixer-sandbox` image
+  built (see below) — only needed to run the agent loop or the CLI
 - An API key for at least one provider, only needed to run the agent loop or
   the CLI — the MCP server and its tools work without one:
   - `ANTHROPIC_API_KEY` from [console.anthropic.com](https://console.anthropic.com)
@@ -55,6 +62,7 @@ runs against any supported provider — currently Anthropic and Groq.
 ```bash
 uv sync
 cp .env.example .env
+docker build -t codefixer-sandbox src/codefixer/sandbox
 ```
 
 Then edit `.env` and fill in whichever key(s) you have. It's loaded
@@ -68,7 +76,8 @@ uv run pytest tests/ -q
 
 Most of the suite (the MCP server, the path confinement, the tool adapter) runs
 entirely offline. Tests that call a real LLM are skipped automatically when the
-matching API key isn't set.
+matching API key isn't set, and sandbox tests are skipped automatically if
+Docker isn't available.
 
 ## Using the CLI
 
@@ -88,7 +97,9 @@ uv run mcp dev src/codefixer/servers/workspace.py
 ```
 
 This opens the MCP Inspector, where each of the five tools can be called
-directly to see its schema and output.
+directly to see its schema and output. This runs the server directly on the
+host, for quick inspection — the real `codefixer fix` CLI always runs it
+inside the sandboxed container instead.
 
 ```bash
 uv run mcp dev src/codefixer/servers/skills.py
@@ -125,22 +136,27 @@ src/codefixer/
 │   ├── workspace.py       MCP server: file tools and test runner
 │   └── skills.py          MCP server: skills exposed as resources
 ├── agent/
-│   ├── mcp_client.py       connects to the workspace server, adapts its tools for an LLM
+│   ├── mcp_client.py       launches the sandboxed workspace server, adapts its tools for an LLM
 │   ├── graph.py            the LangGraph agent loop, the load_skill tool
 │   ├── prompts.py          the agent's system prompt (method, constraints)
 │   ├── report.py           builds the structured final report
 │   └── trace.py            formats one agent-loop message into a readable line
-└── skills/
-    └── loader.py           reads SKILL.md headers and bodies, built-in and per-repo
+├── skills/
+│   └── loader.py           reads SKILL.md headers and bodies, built-in and per-repo
+└── sandbox/
+    ├── Dockerfile          the sandbox image: python:3.12-slim + pytest + mcp, non-root
+    └── container.py        container lifecycle: copy in, restrict, run, diff out, destroy
 skills/                    the 3 built-in skills shipped with CodeFixer
 examples/buggy_shop/       a small buggy repo used to exercise the tools and the agent
-tests/                     Pytest suite for the server, the adapter, and the agent loop
+tests/                     Pytest suite for the server, the sandbox, the adapter, and the agent loop
 ```
 
 ## Status
 
-Steps 1 (the `workspace` MCP server), 2 (the agent loop and CLI), and 3
-(agent skills) are complete: five tested tools, a LangGraph ReAct loop with
-a system prompt, a turn limit, a structured report, a working `codefixer
-fix` command, and skills with progressive disclosure, MCP resources, and
-per-repo overrides. Next up: step 4, the Docker sandbox.
+Steps 1 (the `workspace` MCP server), 2 (the agent loop and CLI), 3 (agent
+skills), and 4 (the Docker sandbox) are complete: five tested tools, a
+LangGraph ReAct loop with a system prompt, a turn limit, a structured
+report, a working `codefixer fix` command, skills with progressive
+disclosure, MCP resources and per-repo overrides, and the `workspace`
+server now running isolated — no network, capped CPU/memory, read-only
+filesystem except the repo itself. Next up: step 5, evals.
