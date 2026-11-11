@@ -10,41 +10,45 @@ DEFAULT_MEMORY = "512m"
 DEFAULT_EXEC_TIMEOUT_SECONDS = 60
 
 
-def _chown_repo_to_sandbox(container_id: str) -> None:
-    # docker cp always writes as root, regardless of the image's default
-    # user - without this, the non-root `sandbox` user can't edit the files
-    # it was just given.
-    subprocess.run(
-        ["docker", "exec", "--user", "root", container_id, "chown", "-R", "sandbox:sandbox", "/repo"],
-        check=True,
-        capture_output=True,
-    )
-
-
-def _load_repo_into_volume(repo_path: Path, volume_name: str, image: str) -> None:
-    """Copies `repo_path` into a Docker-managed volume through a throwaway,
-    writable container - never through the real sandboxed one, since
-    `docker cp` refuses outright to write into a --read-only container."""
+def _load_into_volume(local_path: Path, volume_name: str, image: str) -> None:
+    """Copies `local_path`'s contents into a Docker-managed volume through a
+    throwaway, writable container, mounted at /data - `docker cp` refuses
+    outright to write into a --read-only container (even onto a path with
+    its own tmpfs mount), so population always goes through a container
+    that isn't one."""
     loader_id = subprocess.run(
-        [
-            "docker",
-            "create",
-            "--mount",
-            f"type=volume,source={volume_name},target=/repo",
-            image,
-            "sleep",
-            "infinity",
-        ],
+        ["docker", "create", "--mount", f"type=volume,source={volume_name},target=/data", image, "sleep", "infinity"],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.strip()
     try:
         subprocess.run(["docker", "start", loader_id], check=True, capture_output=True)
-        subprocess.run(["docker", "cp", f"{repo_path}/.", f"{loader_id}:/repo"], check=True)
-        _chown_repo_to_sandbox(loader_id)
+        subprocess.run(["docker", "cp", f"{local_path}/.", f"{loader_id}:/data"], check=True)
+        # docker cp always writes as root, regardless of the image's
+        # default user - without this, the non-root `sandbox` user can't
+        # read/edit the files it was just given.
+        subprocess.run(
+            ["docker", "exec", "--user", "root", loader_id, "chown", "-R", "sandbox:sandbox", "/data"],
+            check=True,
+            capture_output=True,
+        )
     finally:
         subprocess.run(["docker", "rm", "-f", loader_id], capture_output=True)
+
+
+@contextmanager
+def volume_from(local_path: Path, image: str = IMAGE) -> Iterator[str]:
+    """Creates a Docker-managed volume populated with `local_path`'s
+    contents, and removes the volume on exit. Yields the volume's name, to
+    be mounted into a (possibly --read-only) container elsewhere - never
+    the host's actual path."""
+    volume_name = subprocess.run(["docker", "volume", "create"], capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        _load_into_volume(local_path, volume_name, image)
+        yield volume_name
+    finally:
+        subprocess.run(["docker", "volume", "rm", "-f", volume_name], capture_output=True)
 
 
 @contextmanager
@@ -53,6 +57,7 @@ def sandboxed_repo(
     image: str = IMAGE,
     cpus: str = DEFAULT_CPUS,
     memory: str = DEFAULT_MEMORY,
+    extra_mounts: list[tuple[str, str]] | None = None,
 ) -> Iterator[str]:
     """Creates a container from the sandbox image, copies `repo_path` into
     it at /repo, and yields the container id so the caller can run
@@ -67,18 +72,14 @@ def sandboxed_repo(
     destroyed): even a hostile or buggy test can't exfiltrate anything, hog
     resources, or write outside its own sandbox.
 
-    /repo lives on a Docker-managed volume rather than the container's own
-    filesystem, because `docker cp` refuses outright to write into a
-    --read-only container - the repo is loaded into that volume through a
-    separate, throwaway writable container (`_load_repo_into_volume`)
-    before this one even starts. The volume is still never the host's
-    actual repo path.
+    `extra_mounts` are additional (volume_name, container_path) pairs
+    mounted read-only alongside /repo - e.g. code the container needs to
+    run that isn't part of the target repo (build one with `volume_from`).
     """
-    volume_name = subprocess.run(
-        ["docker", "volume", "create"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    try:
-        _load_repo_into_volume(repo_path, volume_name, image)
+    with volume_from(repo_path, image) as repo_volume:
+        mount_args = ["--mount", f"type=volume,source={repo_volume},target=/repo"]
+        for volume_name, target in extra_mounts or []:
+            mount_args += ["--mount", f"type=volume,source={volume_name},target={target},readonly"]
 
         container_id = subprocess.run(
             [
@@ -93,8 +94,7 @@ def sandboxed_repo(
                 "--read-only",
                 "--tmpfs",
                 "/tmp:exec,uid=1000,gid=1000",
-                "--mount",
-                f"type=volume,source={volume_name},target=/repo",
+                *mount_args,
                 image,
                 "sleep",
                 "infinity",
@@ -108,8 +108,6 @@ def sandboxed_repo(
             yield container_id
         finally:
             subprocess.run(["docker", "rm", "-f", container_id], capture_output=True)
-    finally:
-        subprocess.run(["docker", "volume", "rm", "-f", volume_name], capture_output=True)
 
 
 def exec_in_container(

@@ -1,4 +1,5 @@
-import sys
+import shutil
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -8,21 +9,70 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from pydantic import Field, create_model
 
+from codefixer.sandbox.container import copy_repo_out, sandboxed_repo, volume_from
+
+_CODEFIXER_SRC = Path(__file__).resolve().parents[1]
+_SANDBOX_SERVER_PATH = "/opt/codefixer-server"
+
+
+def _stage_workspace_server() -> Path:
+    """Builds a throwaway copy of just the files workspace.py needs to run
+    (itself plus its package __init__.py stubs) - not skills.py or anything
+    else under servers/, which isn't needed and wouldn't even import inside
+    the sandbox (no yaml, no codefixer.skills there)."""
+    staging = Path(tempfile.mkdtemp())
+    (staging / "codefixer" / "servers").mkdir(parents=True)
+    shutil.copy2(_CODEFIXER_SRC / "__init__.py", staging / "codefixer" / "__init__.py")
+    shutil.copy2(_CODEFIXER_SRC / "servers" / "__init__.py", staging / "codefixer" / "servers" / "__init__.py")
+    shutil.copy2(_CODEFIXER_SRC / "servers" / "workspace.py", staging / "codefixer" / "servers" / "workspace.py")
+    return staging
+
 
 @asynccontextmanager
 async def workspace_session(workspace: str):
-    """Opens an MCP client session connected to the workspace server, running
-    as a stdio subprocess with its CODEFIXER_WORKSPACE pointed at `workspace`.
+    """Opens an MCP client session connected to the workspace server,
+    running INSIDE a sandboxed container (no network, capped CPU/memory,
+    read-only filesystem except /repo and /tmp) instead of as a plain host
+    subprocess. workspace.py itself needs no changes for this: the
+    container's WORKDIR is already /repo, matching its default
+    CODEFIXER_WORKSPACE. Its own code is mounted read-only from a separate
+    volume, built once from a throwaway local copy (not committed anywhere,
+    just enough to run the server - see _stage_workspace_server).
+
+    On exit, the container's final /repo state is copied back onto
+    `workspace` on the host - the same net effect as before (the repo on
+    disk ends up fixed), just computed safely inside the sandbox first.
     """
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "codefixer.servers.workspace"],
-        env={"CODEFIXER_WORKSPACE": str(Path(workspace).resolve())},
-    )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    staging = _stage_workspace_server()
+    try:
+        with (
+            volume_from(staging) as server_volume,
+            sandboxed_repo(
+                Path(workspace).resolve(),
+                extra_mounts=[(server_volume, _SANDBOX_SERVER_PATH)],
+            ) as container_id,
+        ):
+            params = StdioServerParameters(
+                command="docker",
+                args=[
+                    "exec",
+                    "-i",
+                    "--env",
+                    f"PYTHONPATH={_SANDBOX_SERVER_PATH}",
+                    container_id,
+                    "python",
+                    "-m",
+                    "codefixer.servers.workspace",
+                ],
+            )
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+
+            copy_repo_out(container_id, Path(workspace).resolve())
+    finally:
+        shutil.rmtree(staging)
 
 
 _JSON_TYPE_TO_PYTHON: dict[str, type] = {
