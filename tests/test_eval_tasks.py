@@ -1,7 +1,7 @@
 from codefixer.evals.tasks import load_tasks
 
 
-def test_load_tasks_finds_the_five_eval_tasks():
+def test_load_tasks_finds_the_six_eval_tasks():
     tasks = load_tasks()
 
     names = {task.name for task in tasks}
@@ -9,6 +9,7 @@ def test_load_tasks_finds_the_five_eval_tasks():
         "calc_discount_divisor",
         "budget_edge_case",
         "import_error_typo",
+        "import_error_circular",
         "wrong_type_concat",
         "multi_file_tax",
     }
