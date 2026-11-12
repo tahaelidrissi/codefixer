@@ -40,6 +40,12 @@ protocol, not through direct function calls:
   `load_skill` tool. Skills are also exposed as MCP resources
   (`src/codefixer/servers/skills.py`), and a target repo can add its own
   under `.codefixer/skills/`, overriding a built-in skill of the same name.
+- **Evals** (`evals/`, `src/codefixer/evals/`) — a small benchmark: a set of
+  buggy repos, each with a test the agent can see and a *hidden* test it
+  never does, so a superficial fix (hardcoding the one visible assertion)
+  gets caught. The harness runs the agent on every task and reports
+  resolution rate, regressions, cheating, turns, tokens, and diff size —
+  objective numbers instead of eyeballing individual runs.
 
 Models are chosen per run as a `"provider:name"` string (e.g.
 `"anthropic:claude-opus-5-5"` or `"groq:openai/gpt-oss-120b"`), so the same code
@@ -115,6 +121,23 @@ and `repo-conventions`. A target repo can add its own under
 `.codefixer/skills/` — picked up automatically by the CLI, with a repo skill
 overriding a built-in one of the same name.
 
+## Evals
+
+```bash
+uv run python evals/run_evals.py --model groq:openai/gpt-oss-120b
+```
+
+Runs the agent on every task under `evals/tasks/` and prints, per task,
+whether it resolved the real (hidden) bug, whether it regressed or cheated
+(edited a test file), and its turns/tokens/diff size - plus averages across
+the run. Add `--compare-skills` to run every task twice, once with the
+built-in skills and once without, to see whether they actually change the
+outcome rather than just assuming they help.
+
+Each task lives in `evals/tasks/<name>/`: `repo/` is what the agent sees,
+`hidden_test.py` is kept structurally outside it and is only run afterward
+against the agent's final result.
+
 ## The example bug
 
 `examples/buggy_shop/` is a minimal fixture: a `calculate_discount` function with
@@ -143,10 +166,14 @@ src/codefixer/
 │   └── trace.py            formats one agent-loop message into a readable line
 ├── skills/
 │   └── loader.py           reads SKILL.md headers and bodies, built-in and per-repo
-└── sandbox/
-    ├── Dockerfile          the sandbox image: python:3.12-slim + pytest + mcp, non-root
-    └── container.py        container lifecycle: copy in, restrict, run, diff out, destroy
+├── sandbox/
+│   ├── Dockerfile          the sandbox image: python:3.12-slim + pytest + mcp, non-root
+│   └── container.py        container lifecycle: copy in, restrict, run, diff out, destroy
+└── evals/
+    ├── tasks.py            reads a task's repo, hidden test, problem, and category
+    └── runner.py           runs the agent on a task, checks the hidden test, computes metrics
 skills/                    the 3 built-in skills shipped with CodeFixer
+evals/tasks/               buggy repos + hidden tests, one per bug category
 examples/buggy_shop/       a small buggy repo used to exercise the tools and the agent
 tests/                     Pytest suite for the server, the sandbox, the adapter, and the agent loop
 ```
@@ -154,9 +181,9 @@ tests/                     Pytest suite for the server, the sandbox, the adapter
 ## Status
 
 Steps 1 (the `workspace` MCP server), 2 (the agent loop and CLI), 3 (agent
-skills), and 4 (the Docker sandbox) are complete: five tested tools, a
-LangGraph ReAct loop with a system prompt, a turn limit, a structured
-report, a working `codefixer fix` command, skills with progressive
-disclosure, MCP resources and per-repo overrides, and the `workspace`
-server now running isolated — no network, capped CPU/memory, read-only
-filesystem except the repo itself. Next up: step 5, evals.
+skills), and 4 (the Docker sandbox) are complete. Step 5 (evals) is mostly
+done: six tasks across five bug categories, a harness that reports
+resolution rate, regressions, cheating, turns, tokens, and diff size, and a
+with/without-skills comparison — a two-model/two-prompt comparison is still
+pending a second provider's API key. Next up: step 6, GitHub integration
+and human validation before any pull request.
