@@ -136,3 +136,11 @@ def push_fix_branch(repo_dir: Path, issue_number: int) -> str:
     )
     git("push", "origin", branch)
     return branch
+
+
+def diff_of(repo_dir: Path) -> str:
+    """The real, current diff of the clone against what it was pulled from -
+    what a reviewer (the agent itself, then a human) actually needs to see,
+    not a summary of it."""
+    result = subprocess.run(["git", "-C", str(repo_dir), "diff"], check=True, capture_output=True, text=True)
+    return result.stdout

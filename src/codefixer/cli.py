@@ -5,10 +5,11 @@ from pathlib import Path
 
 from langgraph.errors import GraphRecursionError
 
-from codefixer.agent.github_client import cloned_repo, fetch_issue, push_fix_branch
+from codefixer.agent.github_client import cloned_repo, diff_of, fetch_issue, push_fix_branch
 from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
 from codefixer.agent.report import Report, build_report
+from codefixer.agent.review import review_diff
 from codefixer.agent.trace import format_step
 from codefixer.skills.loader import SKILLS_DIR
 
@@ -94,11 +95,19 @@ async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
         report = await _run_fix(str(workdir), issue.body, model, max_turns)
 
         print()
-        if report.tests_passed and report.files_modified:
-            branch = push_fix_branch(workdir, issue.number)
-            print(f"Pushed to branch: {branch}")
-        else:
+        if not (report.tests_passed and report.files_modified):
             print("Not pushing: tests are not passing or nothing was changed.")
+            return
+
+        review = review_diff(issue.body, diff_of(workdir), model)
+        print(f"Review: {review.summary}")
+        if review.concerns:
+            print(f"Concerns: {review.concerns}")
+            print("Not pushing: the self-review raised a concern, and there's no human to ask yet.")
+            return
+
+        branch = push_fix_branch(workdir, issue.number)
+        print(f"Pushed to branch: {branch}")
 
 
 def main(argv: list[str] | None = None) -> None:
