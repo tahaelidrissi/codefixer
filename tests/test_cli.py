@@ -33,6 +33,15 @@ def test_parse_args_fix_overrides():
     assert args.max_turns == 5
 
 
+def test_parse_args_fix_issue_defaults():
+    args = _parse_args(["fix-issue", "https://github.com/owner/repo/issues/42"])
+
+    assert args.command == "fix-issue"
+    assert args.issue_url == "https://github.com/owner/repo/issues/42"
+    assert args.model == "claude-opus-5-5"
+    assert args.max_turns == 25
+
+
 @pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="no GROQ_API_KEY")
 def test_cli_fixes_the_buggy_shop_bug(tmp_path, capsys):
     (tmp_path / "shop.py").write_text(

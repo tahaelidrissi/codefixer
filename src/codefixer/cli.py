@@ -5,6 +5,7 @@ from pathlib import Path
 
 from langgraph.errors import GraphRecursionError
 
+from codefixer.agent.github_client import cloned_repo, fetch_issue
 from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
 from codefixer.agent.report import build_report
@@ -23,6 +24,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model", default=DEFAULT_MODEL, help='Model to use, as "provider:name" (default: %(default)s).'
     )
     fix.add_argument(
+        "--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Turn limit before giving up."
+    )
+
+    fix_issue = subparsers.add_parser("fix-issue", help="Fix the bug described by a GitHub issue.")
+    fix_issue.add_argument("issue_url", help="URL of the GitHub issue, e.g. https://github.com/owner/repo/issues/42")
+    fix_issue.add_argument(
+        "--model", default=DEFAULT_MODEL, help='Model to use, as "provider:name" (default: %(default)s).'
+    )
+    fix_issue.add_argument(
         "--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Turn limit before giving up."
     )
 
@@ -73,11 +83,25 @@ async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> None:
     print(f"Tests passed: {report.tests_passed}")
 
 
+async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
+    issue = await fetch_issue(issue_url)
+    print(f"Issue #{issue.number}: {issue.title}")
+    print()
+
+    with cloned_repo(issue.clone_url) as workdir:
+        await _run_fix(str(workdir), issue.body, model, max_turns)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
+    if args.command == "fix":
+        coro = _run_fix(args.repo, args.problem, args.model, args.max_turns)
+    else:
+        coro = _run_fix_issue(args.issue_url, args.model, args.max_turns)
+
     try:
-        asyncio.run(_run_fix(args.repo, args.problem, args.model, args.max_turns))
+        asyncio.run(coro)
     except GraphRecursionError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)

@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from codefixer.agent.github_client import github_session
+from codefixer.agent.github_client import fetch_issue, github_session
 from conftest import requires_docker
 
 pytestmark = [pytest.mark.anyio, requires_docker, pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="no GITHUB_TOKEN")]
@@ -30,3 +30,14 @@ async def test_get_me_returns_the_authenticated_account():
     text = "\n".join(block.text for block in result.content if hasattr(block, "text"))
     payload = json.loads(text)
     assert "login" in payload
+
+
+async def test_fetch_issue_reads_a_real_issue():
+    issue = await fetch_issue("https://github.com/github/github-mcp-server/issues/1")
+
+    assert issue.owner == "github"
+    assert issue.repo == "github-mcp-server"
+    assert issue.number == 1
+    assert issue.title == "Port CLI Server"
+    assert "existing" in issue.body
+    assert issue.clone_url == "https://github.com/github/github-mcp-server.git"
