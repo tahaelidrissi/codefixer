@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 
 import pytest
@@ -12,6 +13,23 @@ pytestmark = pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="no G
 
 _MODEL = "groq:openai/gpt-oss-120b"
 _PROBLEM = "The test test_calculate_discount is failing; calculate_discount returns the wrong result."
+
+
+async def _fake_open_pr(owner, repo, branch, title, body):
+    return f"https://github.invalid/{owner}/{repo}/pull/{branch}"
+
+
+def _initial_state(work, issue_number):
+    return {
+        "problem": _PROBLEM,
+        "diff": diff_of(work),
+        "model": _MODEL,
+        "repo_dir": str(work),
+        "owner": "someone",
+        "repo": "some-repo",
+        "issue_number": issue_number,
+        "issue_title": "calculate_discount returns the wrong result",
+    }
 
 
 def _git(repo_dir, *args):
@@ -36,40 +54,36 @@ def _fixed_clone(tmp_path):
     return origin, work
 
 
-def test_approval_pushes_the_branch_when_a_human_approves(tmp_path):
+def test_approval_pushes_the_branch_and_opens_a_pr_when_a_human_approves(tmp_path):
     origin, work = _fixed_clone(tmp_path)
-    graph = build_approval_graph()
+    graph = build_approval_graph(open_pr=_fake_open_pr)
     config = {"configurable": {"thread_id": "approve-test"}}
 
-    state = graph.invoke(
-        {"problem": _PROBLEM, "diff": diff_of(work), "model": _MODEL, "repo_dir": str(work), "issue_number": 1},
-        config,
-    )
+    state = graph.invoke(_initial_state(work, issue_number=1), config)
     payload = state["__interrupt__"][0].value
     assert payload["summary"]
     assert "diff" in payload
 
     state = graph.invoke(Command(resume=True), config)
 
-    assert state["branch"] == "codefixer/issue-1"
+    assert re.fullmatch(r"codefixer/issue-1-[0-9a-f]{7}", state["branch"])
+    assert state["pr_url"] == f"https://github.invalid/someone/some-repo/pull/{state['branch']}"
     result = subprocess.run(
         ["git", "-C", str(origin), "branch", "--list", state["branch"]], check=True, capture_output=True, text=True
     )
     assert state["branch"] in result.stdout
 
 
-def test_approval_does_not_push_when_a_human_rejects(tmp_path):
+def test_approval_does_not_push_or_open_a_pr_when_a_human_rejects(tmp_path):
     origin, work = _fixed_clone(tmp_path)
-    graph = build_approval_graph()
+    graph = build_approval_graph(open_pr=_fake_open_pr)
     config = {"configurable": {"thread_id": "reject-test"}}
 
-    graph.invoke(
-        {"problem": _PROBLEM, "diff": diff_of(work), "model": _MODEL, "repo_dir": str(work), "issue_number": 2},
-        config,
-    )
+    graph.invoke(_initial_state(work, issue_number=2), config)
     state = graph.invoke(Command(resume=False), config)
 
     assert state["branch"] is None
+    assert state["pr_url"] is None
     result = subprocess.run(["git", "-C", str(origin), "branch"], check=True, capture_output=True, text=True)
     assert "codefixer/issue-2" not in result.stdout
 
@@ -84,15 +98,12 @@ def test_a_paused_approval_survives_a_restart(tmp_path):
     config = {"configurable": {"thread_id": "restart-test"}}
 
     with SqliteSaver.from_conn_string(db_path) as checkpointer:
-        graph = build_approval_graph(checkpointer)
-        graph.invoke(
-            {"problem": _PROBLEM, "diff": diff_of(work), "model": _MODEL, "repo_dir": str(work), "issue_number": 3},
-            config,
-        )
+        graph = build_approval_graph(checkpointer, open_pr=_fake_open_pr)
+        graph.invoke(_initial_state(work, issue_number=3), config)
 
     # Everything above is thrown away here - a new connection, a new graph.
     with SqliteSaver.from_conn_string(db_path) as checkpointer:
-        graph = build_approval_graph(checkpointer)
+        graph = build_approval_graph(checkpointer, open_pr=_fake_open_pr)
 
         snapshot = graph.get_state(config)
         assert snapshot.next == ("approve",)
@@ -101,7 +112,7 @@ def test_a_paused_approval_survives_a_restart(tmp_path):
 
         state = graph.invoke(Command(resume=True), config)
 
-    assert state["branch"] == "codefixer/issue-3"
+    assert re.fullmatch(r"codefixer/issue-3-[0-9a-f]{7}", state["branch"])
     result = subprocess.run(
         ["git", "-C", str(origin), "branch", "--list", state["branch"]], check=True, capture_output=True, text=True
     )

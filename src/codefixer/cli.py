@@ -130,7 +130,10 @@ async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
                 "diff": diff_of(workdir),
                 "model": model,
                 "repo_dir": str(workdir),
+                "owner": issue.owner,
+                "repo": issue.repo,
                 "issue_number": issue.number,
+                "issue_title": issue.title,
             },
             config,
         )
@@ -157,6 +160,7 @@ def _run_resume(issue_number: int) -> None:
 
     if state["branch"]:
         print(f"Pushed to branch: {state['branch']}")
+        print(f"Pull request: {state['pr_url']}")
     else:
         print("Not pushed: rejected during human review.")
     remove_clone(Path(state["repo_dir"]))

@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -131,8 +132,13 @@ def push_fix_branch(repo_dir: Path, issue_number: int) -> str:
 
     Commits under a dedicated "CodeFixer" identity rather than the caller's
     own: the fix wasn't written by a human, the commit shouldn't claim it was.
+
+    The branch name includes a short random suffix: an issue stays open
+    until its PR is merged, so re-running on the same issue is a normal
+    thing to do, and a fixed `codefixer/issue-<N>` name would collide with
+    - and get rejected by - whatever an earlier run already pushed there.
     """
-    branch = f"codefixer/issue-{issue_number}"
+    branch = f"codefixer/issue-{issue_number}-{uuid.uuid4().hex[:7]}"
 
     def git(*args: str) -> None:
         subprocess.run(["git", "-C", str(repo_dir), *args], check=True, capture_output=True, text=True)
@@ -149,6 +155,29 @@ def push_fix_branch(repo_dir: Path, issue_number: int) -> str:
     )
     git("push", "origin", branch)
     return branch
+
+
+async def open_pull_request(owner: str, repo: str, branch: str, title: str, body: str, base: str = "main") -> str:
+    """Opens a pull request for `branch` through the GitHub MCP server -
+    reusing the same official tool rather than a bespoke API call, same
+    reasoning as fetch_issue. `base` defaults to "main" rather than being
+    looked up from the repo's actual default branch: a deliberate
+    simplification for this project, not something worth another API round
+    trip for.
+
+    Needs GITHUB_TOKEN to have Pull requests (read/write) in addition to the
+    Issues/Metadata scope used so far - widened only now, because only now
+    does the task actually need it.
+    """
+    async with github_session() as session:
+        result = await session.call_tool(
+            "create_pull_request",
+            {"owner": owner, "repo": repo, "title": title, "head": branch, "base": base, "body": body},
+        )
+    text = "\n".join(block.text for block in result.content if hasattr(block, "text"))
+    if result.is_error:
+        raise RuntimeError(text)
+    return json.loads(text)["url"]
 
 
 def diff_of(repo_dir: Path) -> str:
