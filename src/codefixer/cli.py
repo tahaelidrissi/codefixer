@@ -5,10 +5,10 @@ from pathlib import Path
 
 from langgraph.errors import GraphRecursionError
 
-from codefixer.agent.github_client import cloned_repo, fetch_issue
+from codefixer.agent.github_client import cloned_repo, fetch_issue, push_fix_branch
 from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
-from codefixer.agent.report import build_report
+from codefixer.agent.report import Report, build_report
 from codefixer.agent.trace import format_step
 from codefixer.skills.loader import SKILLS_DIR
 
@@ -49,7 +49,7 @@ def _resolve_skills_dirs(repo: str) -> list[Path]:
     return skills_dirs
 
 
-async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> None:
+async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> Report:
     hit_limit = False
     final_state = None
 
@@ -82,6 +82,8 @@ async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> None:
     print(f"Files modified: {', '.join(report.files_modified) or '(none)'}")
     print(f"Tests passed: {report.tests_passed}")
 
+    return report
+
 
 async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
     issue = await fetch_issue(issue_url)
@@ -89,7 +91,14 @@ async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
     print()
 
     with cloned_repo(issue.clone_url) as workdir:
-        await _run_fix(str(workdir), issue.body, model, max_turns)
+        report = await _run_fix(str(workdir), issue.body, model, max_turns)
+
+        print()
+        if report.tests_passed and report.files_modified:
+            branch = push_fix_branch(workdir, issue.number)
+            print(f"Pushed to branch: {branch}")
+        else:
+            print("Not pushing: tests are not passing or nothing was changed.")
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -107,3 +107,32 @@ def cloned_repo(clone_url: str):
         # git marks some files inside .git read-only on Windows; shutil.rmtree
         # can't delete those without being told to clear that flag first.
         shutil.rmtree(workdir, onerror=lambda func, path, _exc: (os.chmod(path, stat.S_IWRITE), func(path)))
+
+
+def push_fix_branch(repo_dir: Path, issue_number: int) -> str:
+    """Commits the agent's changes in `repo_dir` onto a new branch and pushes
+    it, so the fix actually reaches GitHub instead of disappearing with the
+    temp clone. Uses plain `git`, authenticated the same way the clone was
+    (whatever credentials are already set up on this machine) - not the
+    GITHUB_TOKEN from `github_session`, which has no Contents scope.
+
+    Commits under a dedicated "CodeFixer" identity rather than the caller's
+    own: the fix wasn't written by a human, the commit shouldn't claim it was.
+    """
+    branch = f"codefixer/issue-{issue_number}"
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo_dir), *args], check=True, capture_output=True, text=True)
+
+    git("checkout", "-b", branch)
+    git(
+        "-c",
+        "user.name=CodeFixer",
+        "-c",
+        "user.email=codefixer@local",
+        "commit",
+        "-am",
+        f"fix: resolve issue #{issue_number}",
+    )
+    git("push", "origin", branch)
+    return branch
