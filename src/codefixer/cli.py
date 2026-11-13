@@ -4,12 +4,13 @@ import sys
 from pathlib import Path
 
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
 
-from codefixer.agent.github_client import cloned_repo, diff_of, fetch_issue, push_fix_branch
+from codefixer.agent.approval import build_approval_graph
+from codefixer.agent.github_client import cloned_repo, diff_of, fetch_issue
 from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
 from codefixer.agent.report import Report, build_report
-from codefixer.agent.review import review_diff
 from codefixer.agent.trace import format_step
 from codefixer.skills.loader import SKILLS_DIR
 
@@ -99,15 +100,30 @@ async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
             print("Not pushing: tests are not passing or nothing was changed.")
             return
 
-        review = review_diff(issue.body, diff_of(workdir), model)
-        print(f"Review: {review.summary}")
-        if review.concerns:
-            print(f"Concerns: {review.concerns}")
-            print("Not pushing: the self-review raised a concern, and there's no human to ask yet.")
-            return
+        approval_graph = build_approval_graph()
+        config = {"configurable": {"thread_id": f"issue-{issue.number}"}}
+        state = approval_graph.invoke(
+            {
+                "problem": issue.body,
+                "diff": diff_of(workdir),
+                "model": model,
+                "repo_dir": str(workdir),
+                "issue_number": issue.number,
+            },
+            config,
+        )
 
-        branch = push_fix_branch(workdir, issue.number)
-        print(f"Pushed to branch: {branch}")
+        payload = state["__interrupt__"][0].value
+        print(f"Review: {payload['summary']}")
+        if payload["concerns"]:
+            print(f"Concerns: {payload['concerns']}")
+        approved = input("Push this fix to a branch? [y/N] ").strip().lower() == "y"
+
+        state = approval_graph.invoke(Command(resume=approved), config)
+        if state["branch"]:
+            print(f"Pushed to branch: {state['branch']}")
+        else:
+            print("Not pushed: rejected during human review.")
 
 
 def main(argv: list[str] | None = None) -> None:
