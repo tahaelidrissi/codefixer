@@ -88,11 +88,12 @@ async def fetch_issue(url: str) -> Issue:
     )
 
 
-@contextmanager
-def cloned_repo(clone_url: str):
-    """Clones a repo into a throwaway temp directory for the agent to fix,
-    cleaned up once the caller is done with it - same lifecycle as the
-    staging directory in mcp_client.py's _stage_workspace_server.
+def clone_repo(clone_url: str) -> Path:
+    """Clones a repo into a throwaway temp directory for the agent to fix.
+    Cleanup is the caller's job (see `remove_clone`) - split out from a single
+    context manager because a paused approval (see approval.py) needs the
+    clone to survive past the end of the function that created it, possibly
+    into a completely different process.
 
     Plain `git clone`, no authentication: the GITHUB_TOKEN used for
     `github_session` is scoped to Issues + Metadata only, not repo
@@ -100,13 +101,25 @@ def cloned_repo(clone_url: str):
     repos until that scope is deliberately widened for a private one.
     """
     workdir = Path(tempfile.mkdtemp())
+    subprocess.run(["git", "clone", clone_url, str(workdir)], check=True, capture_output=True, text=True)
+    return workdir
+
+
+def remove_clone(workdir: Path) -> None:
+    # git marks some files inside .git read-only on Windows; shutil.rmtree
+    # can't delete those without being told to clear that flag first.
+    shutil.rmtree(workdir, onerror=lambda func, path, _exc: (os.chmod(path, stat.S_IWRITE), func(path)))
+
+
+@contextmanager
+def cloned_repo(clone_url: str):
+    """clone_repo + remove_clone as a context manager, for callers that don't
+    need the clone to outlive their own scope."""
+    workdir = clone_repo(clone_url)
     try:
-        subprocess.run(["git", "clone", clone_url, str(workdir)], check=True, capture_output=True, text=True)
         yield workdir
     finally:
-        # git marks some files inside .git read-only on Windows; shutil.rmtree
-        # can't delete those without being told to clear that flag first.
-        shutil.rmtree(workdir, onerror=lambda func, path, _exc: (os.chmod(path, stat.S_IWRITE), func(path)))
+        remove_clone(workdir)
 
 
 def push_fix_branch(repo_dir: Path, issue_number: int) -> str:

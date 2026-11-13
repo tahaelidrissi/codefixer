@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -41,16 +42,17 @@ def _push_node(state: ApprovalState) -> dict:
     return {"branch": push_fix_branch(Path(state["repo_dir"]), state["issue_number"])}
 
 
-def build_approval_graph() -> CompiledStateGraph:
+def build_approval_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     """review -> approve -> push: the self-review from review.py feeds the
     human pause, and the push only happens if the human approves. A separate
     graph from build_graph() in graph.py - that one fixes the bug, this one
     decides whether the fix is allowed to leave the machine, two different
     concerns kept independently editable.
 
-    Checkpointer is in-memory for now: interrupt() needs one to suspend and
-    resume at all, even within a single process run. Surviving an actual
-    restart (a durable checkpointer) is the next increment, not this one.
+    `checkpointer` defaults to an in-memory one, enough for interrupt() to
+    suspend and resume within a single process - what tests use, so they
+    don't touch disk. The CLI passes a durable one (SqliteSaver) so a paused
+    approval survives past the process that created it.
     """
     graph = StateGraph(ApprovalState)
     graph.add_node("review", _review_node)
@@ -59,4 +61,4 @@ def build_approval_graph() -> CompiledStateGraph:
     graph.set_entry_point("review")
     graph.add_edge("review", "approve")
     graph.add_edge("approve", "push")
-    return graph.compile(checkpointer=InMemorySaver())
+    return graph.compile(checkpointer=checkpointer or InMemorySaver())

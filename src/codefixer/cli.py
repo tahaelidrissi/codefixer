@@ -3,16 +3,22 @@ import asyncio
 import sys
 from pathlib import Path
 
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 
 from codefixer.agent.approval import build_approval_graph
-from codefixer.agent.github_client import cloned_repo, diff_of, fetch_issue
+from codefixer.agent.github_client import clone_repo, diff_of, fetch_issue, remove_clone
 from codefixer.agent.graph import DEFAULT_MAX_TURNS, DEFAULT_MODEL, build_graph
 from codefixer.agent.mcp_client import load_workspace_tools, workspace_session
 from codefixer.agent.report import Report, build_report
 from codefixer.agent.trace import format_step
 from codefixer.skills.loader import SKILLS_DIR
+
+# A pending approval must outlive the process that created it, so its state
+# lives in a file (not :memory:), under the same .codefixer/ convention as a
+# target repo's own skills - CodeFixer's own local data, not the repo's.
+_DB_PATH = Path(".codefixer") / "approvals.db"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -37,6 +43,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fix_issue.add_argument(
         "--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Turn limit before giving up."
     )
+
+    resume = subparsers.add_parser("resume", help="Resume a fix-issue run paused on human approval.")
+    resume.add_argument("issue_number", type=int, help="The issue number a previous fix-issue run paused on.")
 
     return parser.parse_args(argv)
 
@@ -87,21 +96,34 @@ async def _run_fix(repo: str, problem: str, model: str, max_turns: int) -> Repor
     return report
 
 
+def _thread_id(issue_number: int) -> str:
+    return f"issue-{issue_number}"
+
+
+def _print_review(payload: dict) -> None:
+    print(f"Review: {payload['summary']}")
+    if payload["concerns"]:
+        print(f"Concerns: {payload['concerns']}")
+
+
 async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
     issue = await fetch_issue(issue_url)
     print(f"Issue #{issue.number}: {issue.title}")
     print()
 
-    with cloned_repo(issue.clone_url) as workdir:
-        report = await _run_fix(str(workdir), issue.body, model, max_turns)
+    workdir = clone_repo(issue.clone_url)
+    report = await _run_fix(str(workdir), issue.body, model, max_turns)
 
-        print()
-        if not (report.tests_passed and report.files_modified):
-            print("Not pushing: tests are not passing or nothing was changed.")
-            return
+    print()
+    if not (report.tests_passed and report.files_modified):
+        print("Not pushing: tests are not passing or nothing was changed.")
+        remove_clone(workdir)
+        return
 
-        approval_graph = build_approval_graph()
-        config = {"configurable": {"thread_id": f"issue-{issue.number}"}}
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(_DB_PATH)) as checkpointer:
+        approval_graph = build_approval_graph(checkpointer)
+        config = {"configurable": {"thread_id": _thread_id(issue.number)}}
         state = approval_graph.invoke(
             {
                 "problem": issue.body,
@@ -113,21 +135,39 @@ async def _run_fix_issue(issue_url: str, model: str, max_turns: int) -> None:
             config,
         )
 
-        payload = state["__interrupt__"][0].value
-        print(f"Review: {payload['summary']}")
-        if payload["concerns"]:
-            print(f"Concerns: {payload['concerns']}")
+    _print_review(state["__interrupt__"][0].value)
+    print(f"Paused. Run `codefixer resume {issue.number}` to approve or reject.")
+
+
+def _run_resume(issue_number: int) -> None:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(_DB_PATH)) as checkpointer:
+        approval_graph = build_approval_graph(checkpointer)
+        config = {"configurable": {"thread_id": _thread_id(issue_number)}}
+
+        snapshot = approval_graph.get_state(config)
+        if not snapshot.next:
+            print(f"No pending approval for issue #{issue_number}.", file=sys.stderr)
+            sys.exit(1)
+
+        _print_review(snapshot.tasks[0].interrupts[0].value)
         approved = input("Push this fix to a branch? [y/N] ").strip().lower() == "y"
 
         state = approval_graph.invoke(Command(resume=approved), config)
-        if state["branch"]:
-            print(f"Pushed to branch: {state['branch']}")
-        else:
-            print("Not pushed: rejected during human review.")
+
+    if state["branch"]:
+        print(f"Pushed to branch: {state['branch']}")
+    else:
+        print("Not pushed: rejected during human review.")
+    remove_clone(Path(state["repo_dir"]))
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
+
+    if args.command == "resume":
+        _run_resume(args.issue_number)
+        return
 
     if args.command == "fix":
         coro = _run_fix(args.repo, args.problem, args.model, args.max_turns)

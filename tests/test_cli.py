@@ -42,6 +42,23 @@ def test_parse_args_fix_issue_defaults():
     assert args.max_turns == 25
 
 
+def test_parse_args_resume():
+    args = _parse_args(["resume", "42"])
+
+    assert args.command == "resume"
+    assert args.issue_number == 42
+
+
+def test_resume_with_no_pending_approval_exits_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["resume", "999"])
+
+    assert exc_info.value.code == 1
+    assert "No pending approval for issue #999" in capsys.readouterr().err
+
+
 @pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="no GROQ_API_KEY")
 def test_cli_fixes_the_buggy_shop_bug(tmp_path, capsys):
     (tmp_path / "shop.py").write_text(

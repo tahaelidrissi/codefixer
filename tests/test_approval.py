@@ -2,6 +2,7 @@ import os
 import subprocess
 
 import pytest
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from codefixer.agent.approval import build_approval_graph
@@ -71,3 +72,37 @@ def test_approval_does_not_push_when_a_human_rejects(tmp_path):
     assert state["branch"] is None
     result = subprocess.run(["git", "-C", str(origin), "branch"], check=True, capture_output=True, text=True)
     assert "codefixer/issue-2" not in result.stdout
+
+
+def test_a_paused_approval_survives_a_restart(tmp_path):
+    """Opens the graph from a SqliteSaver file, pauses it, then throws that
+    graph and its checkpointer away and rebuilds both from scratch pointing
+    at the same file - simulating the process being killed and a brand new
+    one resuming later, which an in-memory checkpointer could never do."""
+    origin, work = _fixed_clone(tmp_path)
+    db_path = str(tmp_path / "approvals.db")
+    config = {"configurable": {"thread_id": "restart-test"}}
+
+    with SqliteSaver.from_conn_string(db_path) as checkpointer:
+        graph = build_approval_graph(checkpointer)
+        graph.invoke(
+            {"problem": _PROBLEM, "diff": diff_of(work), "model": _MODEL, "repo_dir": str(work), "issue_number": 3},
+            config,
+        )
+
+    # Everything above is thrown away here - a new connection, a new graph.
+    with SqliteSaver.from_conn_string(db_path) as checkpointer:
+        graph = build_approval_graph(checkpointer)
+
+        snapshot = graph.get_state(config)
+        assert snapshot.next == ("approve",)
+        payload = snapshot.tasks[0].interrupts[0].value
+        assert payload["summary"]
+
+        state = graph.invoke(Command(resume=True), config)
+
+    assert state["branch"] == "codefixer/issue-3"
+    result = subprocess.run(
+        ["git", "-C", str(origin), "branch", "--list", state["branch"]], check=True, capture_output=True, text=True
+    )
+    assert state["branch"] in result.stdout
